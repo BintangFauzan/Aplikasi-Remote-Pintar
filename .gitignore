@@ -3,6 +3,7 @@
 
 # Dependencies and generated caches
 /remote_pintar/node_modules/
+/remote_pintar/AGENTS.md
 /remote_pintar/.expo/
 /remote_pintar/.claude/
 /remote_pintar/android/.gradle/
