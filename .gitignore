@@ -1,0 +1,16 @@
+/.codegraph
+/Screenshot 2026-10-06 004102.png
+
+# Dependencies and generated caches
+/remote_pintar/node_modules/
+/remote_pintar/.expo/
+/remote_pintar/.claude/
+/remote_pintar/android/.gradle/
+/remote_pintar/android/build/
+/remote_pintar/android/app/build/
+/remote_pintar/android/app/.cxx/
+/remote_pintar/android/local.properties
+/remote_pintar/android/app/debug.keystore
+/remote_pintar/__pycache__/
+**/__pycache__/
+*.py[cod]

@@ -1,0 +1,11 @@
+/.codegraph/
+/Screenshot 2026-10-04 142744.png
+/.git/
+/remote_pintar/node_modules/
+/remote_pintar/.expo/
+/remote_pintar/android/.gradle/
+/remote_pintar/android/build/
+/remote_pintar/android/app/build/
+/remote_pintar/android/app/.cxx/
+/remote_pintar/__pycache__/
+/remote_pintar/*.py[cod]
