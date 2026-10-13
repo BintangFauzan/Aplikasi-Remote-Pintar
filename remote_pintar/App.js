@@ -1,9 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Keyboard, Platform, Alert } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, FlatList, KeyboardAvoidingView, Keyboard, Platform, Alert } from 'react-native';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
 import { GoogleGenAI } from '@google/genai';
+
+import Header from './src/components/Header';
+import ConfigForm from './src/components/ConfigForm';
+import MessageItem from './src/components/MessageItem';
+import ChatInput from './src/components/ChatInput';
 
 const DEFAULT_IP = '192.168.18.8';
 const WELCOME_TEXT = 'Halo! Masukkan API Key Google AI Studio dan IP Server komputer Anda.';
@@ -164,10 +169,9 @@ const SYSTEM_INSTRUCTION = `Anda adalah asisten cerdas pengendali Android TV (Xi
 - Setelah menerima hasil fungsi, jangan memanggil perintah yang sama lagi kecuali memang diminta. Jawab pengguna dengan konfirmasi singkat berdasarkan hasilnya.
 - Jika hasil fungsi berisi ok: false, JANGAN mencoba ulang. Laporkan kegagalannya ke pengguna dengan singkat.`;
 
-// Riwayat chat biasa (tanpa pesan system/tool), harus diawali giliran user
 const buildBaseContents = (msgs) => {
   const contents = msgs
-    .slice(1) // lewati pesan sambutan
+    .slice(1)
     .filter(m => m.sender === 'user' || m.sender === 'gemini')
     .map(m => ({
       role: m.sender === 'user' ? 'user' : 'model',
@@ -199,7 +203,6 @@ function MainApp() {
     messagesRef.current = messages;
   }, [messages]);
 
-  // Pantau keyboard: saat keyboard terbuka, jarak bar navigasi tidak perlu ditambahkan
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
@@ -226,7 +229,6 @@ function MainApp() {
     });
   };
 
-  // Scroll ke bawah saat keyboard muncul agar pesan terakhir tetap terlihat
   useEffect(() => {
     if (keyboardVisible) scrollToBottom();
   }, [keyboardVisible]);
@@ -278,7 +280,7 @@ function MainApp() {
     const timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
-    }, 60000);
+    }, 20000);
     try {
       const res = await fetch(`http://${serverIp}:5000/execute`, {
         method: 'POST',
@@ -290,18 +292,14 @@ function MainApp() {
       let data = null;
       try {
         data = await res.json();
-      } catch (_) {
-        // body bukan JSON, abaikan
-      }
+      } catch (_) {}
 
       if (!res.ok) {
         return { ok: false, message: data?.message || `Server error (${res.status})` };
       }
       return data ?? { ok: false, message: 'Respons server kosong.' };
     } catch (error) {
-      const reason = timedOut
-        ? 'timeout (60 detik)'
-        : error.message || 'koneksi gagal';
+      const reason = timedOut ? 'timeout (20 detik)' : error.message || 'koneksi gagal';
       return {
         ok: false,
         message: `Gagal menerima respons dari backend Termux: ${reason}. Periksa server dan koneksi jaringan.`,
@@ -325,8 +323,6 @@ function MainApp() {
 
   const executeMultiStepCommand = async (userMessage, previousMessages) => {
     const MAX_LOOPS = 8;
-
-    // Riwayat lokal untuk seluruh loop ini (tidak bergantung pada state/ref yang basi)
     const contents = [
       ...buildBaseContents(previousMessages),
       { role: 'user', parts: [{ text: userMessage.text }] },
@@ -336,7 +332,6 @@ function MainApp() {
       const response = await executeWithHistory(contents);
       const calls = response.functionCalls;
 
-      // Tidak ada function call -> jawaban final
       if (!calls || calls.length === 0) {
         setMessages(prev => [...prev, {
           id: newId('final'),
@@ -346,10 +341,8 @@ function MainApp() {
         return;
       }
 
-      // 1) Masukkan giliran model (berisi functionCall) apa adanya
       contents.push(response.candidates[0].content);
 
-      // 2) Jalankan semua call, kumpulkan functionResponse
       const responseParts = [];
       for (const call of calls) {
         const command = call.args?.command;
@@ -368,7 +361,7 @@ function MainApp() {
         setMessages(prev => [...prev, {
           id: newId('res'),
           text: `${result.ok ? '✅' : '❌'} ${command}${args.length ? ' ' + args.join(' ') : ''}: ${result.message}`,
-          sender: 'tool', // bukan 'gemini', supaya tidak masuk riwayat teks
+          sender: 'tool',
         }]);
 
         responseParts.push({
@@ -376,7 +369,6 @@ function MainApp() {
         });
       }
 
-      // 3) Kirim hasil sebagai giliran user -> riwayat berakhir di giliran user
       contents.push({ role: 'user', parts: responseParts });
     }
 
@@ -391,7 +383,7 @@ function MainApp() {
     if (!inputText.trim() || !isConfigured || loading) return;
 
     const userMessage = { id: newId('user'), text: inputText.trim(), sender: 'user' };
-    const previousMessages = messagesRef.current; // belum termasuk userMessage
+    const previousMessages = messagesRef.current;
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
     setLoading(true);
@@ -409,61 +401,22 @@ function MainApp() {
     }
   };
 
-  const renderItem = ({ item }) => {
-    if (item.sender === 'system') {
-      return (
-        <View style={styles.systemRow}>
-          <View style={styles.systemLine} />
-          <Text style={styles.systemText}>{item.text}</Text>
-          <View style={styles.systemLine} />
-        </View>
-      );
-    }
-
-    const isUser = item.sender === 'user';
-    return (
-      <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.geminiBubble]}>
-        <Text style={[styles.messageText, isUser ? styles.userText : styles.geminiText]}>
-          {item.text}
-        </Text>
-      </View>
-    );
-  };
-
   const sendDisabled = loading || !inputText.trim();
 
   return (
-    // Sisi bawah ditangani manual lewat inputContainer, jadi dikecualikan di sini
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style="dark" />
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Gemini TV Remote</Text>
-        <Text style={styles.headerSubtitle}>gemini-3.5-flash-lite + ADB Bridge</Text>
-      </View>
+      <Header />
 
       {!isConfigured ? (
-        <View style={[styles.keyContainer, { paddingBottom: 24 + insets.bottom }]}>
-          <Text style={styles.keyLabel}>Google AI Studio API Key:</Text>
-          <TextInput
-            style={styles.keyInput}
-            placeholder="AIzaSy..."
-            placeholderTextColor="#888"
-            secureTextEntry
-            value={apiKey}
-            onChangeText={setApiKey}
-          />
-          <Text style={styles.keyLabel}>IP Server Termux (Flask):</Text>
-          <TextInput
-            style={styles.keyInput}
-            placeholder="192.168.18.X"
-            placeholderTextColor="#888"
-            value={serverIp}
-            onChangeText={setServerIp}
-          />
-          <TouchableOpacity style={styles.saveButton} onPress={handleSaveConfig}>
-            <Text style={styles.saveButtonText}>Simpan & Hubungkan</Text>
-          </TouchableOpacity>
-        </View>
+        <ConfigForm
+          apiKey={apiKey}
+          setApiKey={setApiKey}
+          serverIp={serverIp}
+          setServerIp={setServerIp}
+          onSave={handleSaveConfig}
+          paddingBottom={24 + insets.bottom}
+        />
       ) : (
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -481,7 +434,7 @@ function MainApp() {
           <FlatList
             ref={listRef}
             data={messages}
-            renderItem={renderItem}
+            renderItem={({ item }) => <MessageItem item={item} />}
             keyExtractor={item => item.id}
             contentContainerStyle={styles.chatList}
             keyboardShouldPersistTaps="handled"
@@ -495,28 +448,13 @@ function MainApp() {
             </View>
           )}
 
-          <View
-            style={[
-              styles.inputContainer,
-              { paddingBottom: 12 + (keyboardVisible ? 0 : insets.bottom) },
-            ]}
-          >
-            <TextInput
-              style={styles.textInput}
-              placeholder="Contoh: Besarkan volume / Buka Netflix"
-              placeholderTextColor="#888"
-              value={inputText}
-              onChangeText={setInputText}
-              multiline={true}
-            />
-            <TouchableOpacity
-              style={[styles.sendButton, sendDisabled && styles.sendButtonDisabled]}
-              onPress={sendMessage}
-              disabled={sendDisabled}
-            >
-              <Text style={styles.sendButtonText}>Kirim</Text>
-            </TouchableOpacity>
-          </View>
+          <ChatInput
+            inputText={inputText}
+            setInputText={setInputText}
+            onSend={sendMessage}
+            disabled={sendDisabled}
+            paddingBottom={12 + (keyboardVisible ? 0 : insets.bottom)}
+          />
         </KeyboardAvoidingView>
       )}
     </SafeAreaView>
@@ -536,23 +474,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F5F7FB',
   },
-  header: {
-    padding: 16,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E1E8ED',
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333333',
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: '#666666',
-    marginTop: 2,
-  },
   headerActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -571,69 +492,11 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
     fontWeight: '500',
   },
-  keyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: 24,
-  },
-  keyLabel: {
-    fontSize: 14,
-    marginBottom: 6,
-    color: '#333333',
-    fontWeight: '600',
-  },
-  keyInput: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E1E8ED',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 8,
-    fontSize: 15,
-    marginBottom: 16,
-  },
-  saveButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  saveButtonText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
   content: {
     flex: 1,
   },
   chatList: {
     padding: 16,
-  },
-  messageBubble: {
-    maxWidth: '80%',
-    padding: 12,
-    borderRadius: 12,
-    marginVertical: 6,
-  },
-  userBubble: {
-    alignSelf: 'flex-end',
-    backgroundColor: '#007AFF',
-  },
-  geminiBubble: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E1E8ED',
-  },
-  messageText: {
-    fontSize: 15,
-  },
-  userText: {
-    color: '#FFFFFF',
-  },
-  geminiText: {
-    color: '#333333',
   },
   loadingContainer: {
     paddingHorizontal: 16,
@@ -643,60 +506,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#888888',
     fontStyle: 'italic',
-  },
-  systemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 8,
-    paddingHorizontal: 16,
-  },
-  systemLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#D0D7DF',
-  },
-  systemText: {
-    fontSize: 11,
-    color: '#007AFF',
-    paddingHorizontal: 8,
-    fontWeight: '600',
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 12,
-    paddingTop: 12,
-    backgroundColor: '#FFFFFF',
-    borderTopWidth: 1,
-    borderTopColor: '#E1E8ED',
-    alignItems: 'flex-end',
-  },
-  textInput: {
-    flex: 1,
-    backgroundColor: '#F0F2F5',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    fontSize: 15,
-    color: '#333333',
-    maxHeight: 120,
-    minHeight: 40,
-    textAlignVertical: 'center',
-  },
-  sendButton: {
-    marginLeft: 10,
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 16,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  sendButtonDisabled: {
-    opacity: 0.5,
-  },
-  sendButtonText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    fontSize: 15,
   },
 });
